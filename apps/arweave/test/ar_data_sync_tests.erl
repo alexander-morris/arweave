@@ -809,17 +809,6 @@ post_blocks(Wallet, BlockMap) ->
 					#{ miner => {master, "master"}, await_on => {master, "master"} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
-				lists:foreach(
-					fun
-						({{#tx{ format = 2 } = TX, Chunks}, Format})
-								when Format == v2 orelse Format == v2_original_split
-									orelse Format == fixed_data ->
-							post_proofs_to_master(B, TX, Chunks);
-						(_) ->
-							ok
-					end,
-					TXsWithChunks
-				),
 				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
 						Type /= v2_no_data, Type /= empty_tx]
 		end,

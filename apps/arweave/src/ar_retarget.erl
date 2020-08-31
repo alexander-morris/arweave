@@ -56,12 +56,15 @@ maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 %% since the last retarget occcurred.
 %% @end
 calculate_difficulty(OldDiff, TS, Last, Height) ->
-	case {ar_fork:height_1_7(), ar_fork:height_1_8()} of
-		{Height, _} ->
+	case {ar_fork:height_1_7(), ar_fork:height_1_8(), ar_fork:height_2_4()} of
+		{_, _, Height} ->
+			% TODO
+			1;
+		{Height, _, _} ->
 			switch_to_randomx_fork_diff(OldDiff);
-		{_, Height} ->
+		{_, Height, _} ->
 			switch_to_linear_diff(OldDiff);
-		{_, H} when Height > H ->
+		{_, H, _} when Height > H ->
 			calculate_difficulty_linear(OldDiff, TS, Last, Height);
 		_ ->
 			calculate_difficulty1(OldDiff, TS, Last, Height)

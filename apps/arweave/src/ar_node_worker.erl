@@ -894,11 +894,19 @@ start_mining(StateIn) ->
 		tags := Tags
 	} = StateIn,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	[{height, Height}] = ets:lookup(node_state, height),
 	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	[{current, Current}] = ets:lookup(node_state, current),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	case ar_poa:generate(BI) of
+	POA =
+		case Height + 1 >= ar_fork:height_2_4() of
+			true ->
+				not_set;
+			false ->
+				ar_poa:generate(BI)
+		end,
+	case POA of
 		unavailable ->
 			?LOG_INFO(
 				[
@@ -908,7 +916,7 @@ start_mining(StateIn) ->
 				]
 			),
 			StateIn;
-		POA ->
+		_ ->
 			ar_watchdog:started_hashing(),
 			B = ar_block_cache:get(BlockCache, Current),
 			Miner = ar_mine:start(

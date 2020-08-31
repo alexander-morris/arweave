@@ -24,11 +24,13 @@
 	add_peers/1,
 	set_loss_probability/1,
 	get_mempool_size/0,
-	get_block_shadow_from_cache/1
+	get_block_shadow_from_cache/1,
+	get_search_space_upper_bound/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_mine.hrl").
 
 %%%===================================================================
 %%% API
@@ -210,6 +212,24 @@ get_mempool_size() ->
 get_block_shadow_from_cache(H) ->
 	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	ar_block_cache:get(BlockCache, H).
+
+%% @doc Get the upper bound of the SPoRA search space of the block of the given height.
+get_search_space_upper_bound(Height) ->
+	[{height, CurrentHeight}] = ets:lookup(node_state, height),
+	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	TargetHeight = Height - ?SEARCH_SPACE_UPPER_BOUND_DEPTH(Height),
+	case TargetHeight > CurrentHeight of
+		true ->
+			{error, height_out_of_range};
+		false ->
+			Index = CurrentHeight - TargetHeight + 1,
+			case Index > length(BI) of
+				true ->
+					element(2, lists:last(BI));
+				false ->
+					element(2, lists:nth(CurrentHeight - TargetHeight + 1, BI))
+			end
+	end.
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.

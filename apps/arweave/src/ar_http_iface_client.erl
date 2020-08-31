@@ -77,18 +77,11 @@ has_tx(Peer, ID) ->
 		_ -> error
 	end.
 
-
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, NewB, BDS) ->
 	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
-	ShortHashList =
-		lists:map(
-			fun ar_util:encode/1,
-			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
-		),
-	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
 	PostProps = [
-		{<<"new_block">>, {BlockShadowProps}},
+		{<<"new_block">>, {BlockProps}},
 		%% Add the P2P port field to be backwards compatible with nodes
 		%% running the old version of the P2P port feature.
 		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
@@ -98,7 +91,8 @@ send_new_block(Peer, NewB, BDS) ->
 		method => post,
 		peer => Peer,
 		path => "/block",
-		headers => p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
+		headers =>
+			p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
 		body => ar_serialize:jsonify({PostProps}),
 		timeout => 3 * 1000
 	}).
