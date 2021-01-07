@@ -56,21 +56,24 @@ maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 %% since the last retarget occcurred.
 %% @end
 calculate_difficulty(OldDiff, TS, Last, Height) ->
-	case {ar_fork:height_1_7(), ar_fork:height_1_8(), ar_fork:height_2_4()} of
-		{_, _, Height} ->
-			% TODO
-			1;
-		{Height, _, _} ->
+	case {ar_fork:height_1_7(), ar_fork:height_1_8(), ar_fork:height_1_9(), ar_fork:height_2_4()}
+	of
+		{Height, _, _, _} ->
 			switch_to_randomx_fork_diff(OldDiff);
-		{_, Height, _} ->
+		{_, Height, _, _} ->
 			switch_to_linear_diff(OldDiff);
-		{_, H, _} when Height > H ->
-			calculate_difficulty_linear(OldDiff, TS, Last, Height);
+		{_, _, _, Height_2_4} when Height >= Height_2_4 ->
+			% TODO
+			calculate_difficulty_2_4(OldDiff, TS, Last, Height);
+		{_, _, Height_1_9, _} when Height >= Height_1_9 ->
+			calculate_difficulty_1_9(OldDiff, TS, Last, Height);
+		{_, Height_1_8, _, _} when Height > Height_1_8 ->
+			calculate_difficulty_1_8(OldDiff, TS, Last, Height);
 		_ ->
-			calculate_difficulty1(OldDiff, TS, Last, Height)
+			calculate_difficulty_original(OldDiff, TS, Last, Height)
 	end.
 
-calculate_difficulty1(OldDiff, TS, Last, Height) ->
+calculate_difficulty_original(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
@@ -84,15 +87,7 @@ calculate_difficulty1(OldDiff, TS, Last, Height) ->
 	),
 	Diff.
 
-calculate_difficulty_linear(OldDiff, TS, Last, Height) ->
-	case Height >= ar_fork:height_1_9() of
-		false ->
-			calculate_difficulty_legacy(OldDiff, TS, Last, Height);
-		true ->
-			calculate_difficulty_linear2(OldDiff, TS, Last, Height)
-	end.
-
-calculate_difficulty_legacy(OldDiff, TS, Last, Height) ->
+calculate_difficulty_1_8(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeDelta = ActualTime / TargetTime,
@@ -109,7 +104,7 @@ calculate_difficulty_legacy(OldDiff, TS, Last, Height) ->
 			)
 	end.
 
-calculate_difficulty_linear2(OldDiff, TS, Last, Height) ->
+calculate_difficulty_1_9(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeDelta = ActualTime / TargetTime,
@@ -124,6 +119,25 @@ calculate_difficulty_linear2(OldDiff, TS, Last, Height) ->
 				1 / ?DIFF_ADJUSTMENT_UP_LIMIT,
 				?DIFF_ADJUSTMENT_DOWN_LIMIT
 			),
+			DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
+			between(
+				MaxDiff - DiffInverse,
+				MinDiff,
+				MaxDiff
+			)
+	end.
+
+calculate_difficulty_2_4(OldDiff, TS, Last, Height) ->
+	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
+	ActualTime = TS - Last,
+	TimeDelta = ActualTime / TargetTime,
+	case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
+		true ->
+			OldDiff;
+		false ->
+			MaxDiff = ar_mine:max_difficulty(),
+			MinDiff = ar_mine:min_difficulty(Height),
+			EffectiveTimeDelta = ActualTime / TargetTime,
 			DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
 			between(
 				MaxDiff - DiffInverse,
@@ -199,41 +213,64 @@ calculate_difficulty_linear_test() ->
 	Retarget1 = Timestamp - erlang:trunc(TargetTime / (1 + ?RETARGET_TOLERANCE / 2)),
 	?assertEqual(
 		Diff,
-		calculate_difficulty_linear(Diff, Timestamp, Retarget1, Height)
+		calculate_difficulty_2_4(Diff, Timestamp, Retarget1, Height)
 	),
 	Retarget2 = Timestamp - erlang:trunc(TargetTime * (1 + ?RETARGET_TOLERANCE / 2)),
 	?assertEqual(
 		Diff,
-		calculate_difficulty_linear(Diff, Timestamp, Retarget2, Height)
+		calculate_difficulty_2_4(Diff, Timestamp, Retarget2, Height)
 	),
 	%% The change is bigger than max allowed change up.
 	Retarget3 = Timestamp - TargetTime div (?DIFF_ADJUSTMENT_UP_LIMIT + 1),
 	?assertEqual(
 		?DIFF_ADJUSTMENT_UP_LIMIT * hashes(Diff),
-		hashes(calculate_difficulty_linear(Diff, Timestamp, Retarget3, Height))
+		hashes(calculate_difficulty_1_9(Diff, Timestamp, Retarget3, Height))
+	),
+	?assertEqual(
+		(?DIFF_ADJUSTMENT_UP_LIMIT + 1) * hashes(Diff),
+		hashes(calculate_difficulty_2_4(Diff, Timestamp, Retarget3, Height))
 	),
 	%% The change is bigger than max allowed change down.
 	Retarget4 = Timestamp - (?DIFF_ADJUSTMENT_DOWN_LIMIT + 1) * TargetTime,
 	?assertEqual(
 		hashes(Diff),
 		?DIFF_ADJUSTMENT_DOWN_LIMIT * hashes(
-			calculate_difficulty_linear(Diff, Timestamp, Retarget4, Height)
+			calculate_difficulty_1_9(Diff, Timestamp, Retarget4, Height)
+		)
+	),
+	Retarget4_2 = Timestamp - (?DIFF_ADJUSTMENT_DOWN_LIMIT + 2) * TargetTime,
+	?assertEqual(
+		hashes(Diff),
+		(?DIFF_ADJUSTMENT_DOWN_LIMIT + 2) * hashes(
+			calculate_difficulty_2_4(Diff, Timestamp, Retarget4_2, Height)
 		)
 	),
 	%% The change is within limits.
 	Retarget5 = Timestamp - TargetTime div (?DIFF_ADJUSTMENT_UP_LIMIT - 1),
-	NewDiff = calculate_difficulty_linear(Diff, Timestamp, Retarget5, Height),
+	NewDiff = calculate_difficulty_1_9(Diff, Timestamp, Retarget5, Height),
 	?assert(Diff < NewDiff),
 	?assertEqual(
 		(?DIFF_ADJUSTMENT_UP_LIMIT - 1) * hashes(Diff),
 		hashes(NewDiff)
 	),
 	Retarget6 = Timestamp - ?DIFF_ADJUSTMENT_DOWN_LIMIT * TargetTime,
-	NewDiff2 = calculate_difficulty_linear(Diff, Timestamp, Retarget6, Height),
+	NewDiff2 = calculate_difficulty_1_9(Diff, Timestamp, Retarget6, Height),
 	?assert(Diff > NewDiff2),
 	?assertEqual(
 		hashes(Diff),
 		?DIFF_ADJUSTMENT_DOWN_LIMIT * hashes(NewDiff2)
+	),
+	NewDiff3 = calculate_difficulty_2_4(Diff, Timestamp, Retarget5, Height),
+	?assert(Diff < NewDiff3),
+	?assertEqual(
+		(?DIFF_ADJUSTMENT_UP_LIMIT - 1) * hashes(Diff),
+		hashes(NewDiff3)
+	),
+	NewDiff4 = calculate_difficulty_2_4(Diff, Timestamp, Retarget6, Height),
+	?assert(Diff > NewDiff4),
+	?assertEqual(
+		hashes(Diff),
+		?DIFF_ADJUSTMENT_DOWN_LIMIT * hashes(NewDiff4)
 	).
 
 hashes(Diff) ->
